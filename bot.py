@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command
@@ -8,10 +10,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
+# === ЗАГРУЗКА .env ===
+load_dotenv()
+
 # === НАСТРОЙКИ ===
-TOKEN = #"токен от BotFather"
-CHANNEL_ID = #цифровой ID канала -100123456
-ADMIN_IDS = #[ID админа 123456678]
+TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
 # === FSM ===
 class AddRecipe(StatesGroup):
