@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command
@@ -9,13 +8,15 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
+from dotenv import load_dotenv
 
-# === ЗАГРУЗКА .env ===
-load_dotenv()
+recipe_storage = {}
+
 
 # === НАСТРОЙКИ ===
+load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
 # === FSM ===
@@ -115,7 +116,7 @@ async def send_preview(chat_id: int, state: FSMContext):
     else:
         await bot.send_message(chat_id, teaser, reply_markup=kb)
 
-# === ОБРАБОТКА КНОПОК РЕДАКТИРОВАНИЯ ===
+# === РЕДАКТИРОВАНИЕ ===
 @router.callback_query(F.data == "edit_teaser")
 async def edit_teaser(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("📝 Пришли заново тизер с медиа (фото/видео):")
@@ -149,32 +150,60 @@ async def publish_recipe(callback: CallbackQuery, state: FSMContext):
     media = data.get("media")
 
     try:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📖 Показать рецепт", callback_data=f"show_recipe:{full_text}")]
+        # Заглушка для будущего message
+        sent_message = None
+
+        # Сначала создаём кнопку с временным ID
+        dummy_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏳ Загружается...", callback_data="pending")]
         ])
 
+        # Отправляем без нормальной кнопки
         if media:
             media_type, file_id = media
             if media_type == "photo":
-                await bot.send_photo(CHANNEL_ID, file_id, caption=teaser, reply_markup=kb)
+                sent_message = await bot.send_photo(CHANNEL_ID, file_id, caption=teaser, reply_markup=dummy_kb)
             else:
-                await bot.send_video(CHANNEL_ID, file_id, caption=teaser, reply_markup=kb)
+                sent_message = await bot.send_video(CHANNEL_ID, file_id, caption=teaser, reply_markup=dummy_kb)
         else:
-            await bot.send_message(CHANNEL_ID, text=teaser, reply_markup=kb)
+            sent_message = await bot.send_message(CHANNEL_ID, text=teaser, reply_markup=dummy_kb)
+
+        # Сохраняем рецепт по message_id
+        recipe_storage[sent_message.message_id] = full_text
+
+        # Обновляем кнопку
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📖 Показать рецепт", callback_data=f"show_recipe:{sent_message.message_id}")]
+        ])
+
+        # Редактируем кнопку в сообщении
+        await bot.edit_message_reply_markup(
+            chat_id=sent_message.chat.id,
+            message_id=sent_message.message_id,
+            reply_markup=kb
+        )
 
         await callback.message.answer("✅ Рецепт опубликован в канал!")
         await state.clear()
+
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка при публикации: {e}")
 
-# === КНОПКА "ПОКАЗАТЬ РЕЦЕПТ" ===
+
+# === ПОКАЗАТЬ РЕЦЕПТ ===
 @router.callback_query(F.data.startswith("show_recipe:"))
 async def handle_show_recipe(callback: CallbackQuery):
     user_id = callback.from_user.id
     is_sub = await is_subscriber(user_id)
-    print(f"[Проверка подписки] user_id={user_id}, подписан={is_sub}")
 
-    full_text = callback.data.split(":", 1)[1]
+    try:
+        msg_id = int(callback.data.split(":")[1])
+        full_text = recipe_storage.get(msg_id)
+    except Exception:
+        full_text = None
+
+    if not full_text:
+        return await callback.answer("❌ Рецепт не найден.", show_alert=True)
 
     if is_sub:
         await callback.answer(full_text[:200], show_alert=True)
